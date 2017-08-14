@@ -11,7 +11,10 @@ if (!dir.exists("figures")) {
 aggregates <- responses %>%
   dplyr::group_by(query, article, question, choice) %>%
   dplyr::tally() %>%
-  dplyr::ungroup()
+  dplyr::ungroup() %>%
+  tidyr::spread(choice, n, fill = 0) %>%
+  tidyr::gather(choice, n, -c(query, article, question)) %>%
+  dplyr::mutate(choice = factor(choice, levels = c("yes", "no", "dismiss", "timeout")))
 
 plots <- list()
 for (query in unique(aggregates$query)) {

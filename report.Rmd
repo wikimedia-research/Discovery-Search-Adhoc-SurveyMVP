@@ -1,0 +1,1060 @@
+---
+title: "[WIP] Search Surveys"
+subtitle: "Judging Relevance With Human Graders"
+author:
+  - "<a href='https://meta.wikimedia.org/wiki/User:EBernhardson_(WMF)'>Erik Bernhardson</a>"
+  - "<a href='https://meta.wikimedia.org/wiki/User:TJones_(WMF)'>Trey Jones</a>"
+  - "<a href='https://meta.wikimedia.org/wiki/User:MPopov_(WMF)'>Mikhail Popov</a>"
+  - "<a href='https://meta.wikimedia.org/wiki/User:DTankersley_(WMF)'>Deb Tankersley</a>"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  html_document:
+    # Table of Contents
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    toc_depth: 3
+    code_folding: hide
+    # Figures
+    fig_width: 16
+    fig_height: 8
+    # Theme
+    theme: readable
+    # Files
+    self_contained: true
+    keep_md: false
+    # Extras
+    mathjax: https://tools-static.wmflabs.org/cdnjs/ajax/libs/mathjax/2.6.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML
+    md_extensions: +raw_html +markdown_in_html_blocks +tex_math_dollars +fancy_lists +startnum +lists_without_preceding_blankline
+---
+```{r setup, echo=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+library(magrittr)
+library(glue)
+library(ggplot2)
+```
+```{css fonts, echo=FALSE}
+@import url('https://fonts.googleapis.com/css?family=Source+Code+Pro|Source+Sans+Pro|Source+Serif+Pro');
+body, p {
+  font-family: 'Source Serif Pro', serif;
+}
+pre, code {
+  font-family: 'Source Code Pro', monospace;
+}
+table, tr, td, h1, h2, h3, h4, h5, h6 {
+  font-family: 'Source Sans Pro', sans-serif;
+}
+```
+```{js fullrez}
+$( function() {
+  /* Lets the user click on the images to view them in full resolution. */
+  $( "img" ).wrap( function() {
+    var link = $( '<a/>' );
+    link.attr( 'href', $( this ).attr( 'src' ));
+    link.attr( 'target', '_blank' );
+    return link;
+  } );
+} );
+```
+
+## Background
+
+We performed a series of tests on English Wikipedia requesting feedback from users about whether the article they were reading was relevant to one of the curated search queries. For our minimum viable product (MVP) test, we hard-coded a list of queries and articles. We also tried different wordings of the relevance question, to assess the impact of each.
+
+```{r data_expert}
+trey <- readr::read_tsv("data/trey_opinion.tsv")
+```
+
+For this MVP, the queries were:
+
+```{r list_queries, results='asis'}
+cat(paste0("- ", paste0(unique(trey$query), collapse = "\n- ")))
+```
+
+For each query, we found 5 articles -- some relevant and some irrelevant. The following table shows which pages we asked users about and our judgements:
+
+```{r list_articles, results='asis'}
+articles <- trey[, c("query", "article", "opinion")]
+articles$query[duplicated(articles$query)] <- ""
+articles$article <- paste0(
+  "<a href='https://en.wikipedia.org/wiki/", gsub(" ", "_", articles$article, fixed = TRUE), "'>",
+  articles$article,
+  "</a>"
+)
+knitr::kable(articles, format = "markdown", escape = FALSE)
+```
+
+There were 4 varieties of questions that we asked:
+
+1. Would you click on this page when searching for '...'?
+2. If you searched for '...', would this article be a good result?
+3. If you searched for '...', would this article be relevant?
+4. If someone searched for '...', would they want to read this article?
+
+(Where "..." was replaced with the actual query.)
+
+## First Test {.tabset}
+
+```{r data_first}
+responses_first <- readr::read_tsv("data/17069968.tsv")
+```
+```{r aggregates_first, echo=TRUE}
+aggregates_first <- responses_first %>%
+  dplyr::group_by(query, article, question, choice) %>%
+  dplyr::tally() %>%
+  dplyr::ungroup() %>%
+  tidyr::spread(choice, n, fill = 0) %>%
+  dplyr::mutate(
+    total = yes + no,
+    score = (yes - no) / (total + 1),
+    yes = yes / total,
+    no = no / total,
+    dismiss = dismiss / (total + dismiss),
+    engaged = (total + dismiss) / (total + dismiss + timeout)
+  ) %>%
+  dplyr::select(-c(total, timeout)) %>%
+  tidyr::gather(choice, prop, -c(query, article, question)) %>%
+  dplyr::mutate(choice = factor(choice, levels = c("yes", "no", "dismiss", "engaged", "score")))
+```
+
+### Summary
+
+The first test (`r format(as.Date(min(responses_first$ts)), "%m/%d")`-`r format(as.Date(max(responses_first$ts)), "%m/%d")`) had 0 time delay and presented users with options to answer "Yes" or "No" or dismiss the notification. The notification disappeared after 30 seconds if the user did not interact with it. There were `r prettyNum(length(unique(responses_first$session_id, as.Date(responses_first$ts))), big.mark = ",")` sessions and `r prettyNum(sum(responses_first$choice %in% c("yes", "no")), big.mark = ",")` yes/no responses. `r prettyNum(sum(responses_first$choice == "timeout"), big.mark = ",")` (`r sprintf("%.1f%%", 100 * sum(responses_first$choice == "timeout") / nrow(responses_first))`) surveys timed out and `r prettyNum(sum(responses_first$choice == "dismiss"), big.mark = ",")` surveys were dismissed by the user.
+
+```{r summary_first}
+temp <- dplyr::left_join(
+  tidyr::spread(aggregates_first, choice, prop),
+  trey, by = c("query", "article")
+)
+ggplot(temp, aes(x = rating, y = score)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_smooth(formula = y ~ x, method = "lm", se = FALSE, color = "black") +
+  geom_jitter(height = 0, width = 0.1, aes(color = opinion), size = 2) +
+  scale_color_brewer("Trey's opinion of article's relevance", palette = "Set1") +
+  facet_wrap(~ question) +
+  labs(
+    x = "Trey's opinion of article's relevance",
+    y = "Relevance score: (#yes - #no) / (#yes + #no + 1)",
+    title = "Distribution of the crowd's responses compared to expert opinion",
+    subtitle = "With simple linear regression fit overlaid",
+    caption = "The positive slope suggests a relationship between users' responses (as summary relevance scores) and actual page relevancy."
+  ) +
+  wmf::theme_facet(12, "Source Sans Pro")
+ggplot(temp, aes(x = rating, y = engaged)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_smooth(formula = y ~ x, method = "lm", se = FALSE, color = "black") +
+  geom_jitter(height = 0, width = 0.1, aes(color = opinion), size = 2) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  scale_color_brewer("Trey's opinion of article's relevance", palette = "Set1") +
+  facet_wrap(~ question) +
+  labs(
+    x = "Trey's opinion of article's relevance",
+    y = "Engagement with survey",
+    title = "Users' engagement with survey (not letting it time-out)",
+    subtitle = "With simple linear regression fit overlaid",
+    caption = "Slight negative linear relationship suggests more users engaged with the survey (responded or dismissed) when the page was less relevant."
+  ) +
+  wmf::theme_facet(12, "Source Sans Pro")
+rm(temp)
+```
+
+### Survey Responses
+
+```{r datavis_first}
+for (query in unique(aggregates_first$query)) {
+  injector <- function(string) {
+    return(sub("...", query, string, fixed = TRUE))
+  }
+  p <- ggplot(
+    aggregates_first[aggregates_first$query == query & aggregates_first$choice != "score", ],
+    aes(x = article, y = prop, fill = choice)
+  ) +
+    geom_bar(stat = "identity", position = position_dodge(width = 0.8), color = "white") +
+    facet_wrap( ~ question, labeller = as_labeller(injector)) +
+    scale_y_continuous(labels = scales::percent_format()) +
+    scale_fill_manual("Response", values = c(
+      yes = "#377EB8",
+      no = "#E41A1C",
+      dismiss = "#984EA3",
+      engaged = "black"
+    )) +
+    coord_flip() +
+    labs(
+      title = glue("Query: '{query}'"),
+      subtitle = "Yes/No is out of non-dismissive responses; dismiss % is out of all engagements; engagement is inverse of time-outs",
+      x = "Article", y = "Number of responses"
+    ) +
+    wmf::theme_facet(12, "Source Sans Pro")
+  print(p)
+}
+```
+
+### Relevance Predictions
+
+We want to be able to categorize articles as relevant/irrelevant based on user's survey responses. We train a number of classification models using expert opinion as the response and a summary *score* and *engagement* as predictors. They are computed as follows:
+
+$$
+\text{Score} = \frac{\#\{\text{response: yes}\} - \#\{\text{response: no}\}}{\#\{\text{response: yes}\} + \#\{\text{response: no}\} + 1}
+$$
+
+$$
+\text{Engagement} = \frac{\#\{\text{response: yes/no/dismiss}\}}{\#\{\text{surveys}\}}
+$$
+
+The classifiers trained are:
+
+- [logistic regression](https://en.wikipedia.org/wiki/Logistic_regression)
+- [random forest](https://en.wikipedia.org/wiki/Random_forest)
+- [backpropagated](https://en.wikipedia.org/wiki/Artificial_neural_network#Backpropagation) [neural network](https://en.wikipedia.org/wiki/Artificial_neural_network) with 2 hidden layers having 5 and 3 neurons, respectively
+- [naïve Bayes](https://en.wikipedia.org/wiki/Naive_Bayes_classifier)
+- [gradient-boosted trees](https://en.wikipedia.org/wiki/Gradient_boosting#Gradient_tree_boosting) (via [XGBoost](https://github.com/dmlc/xgboost))
+
+We trained a classifier on each of the 4 questions using the default parameters and a random 70% of the pages as training data and assess its accuracy using a test set from the remaining 30% of the pages. We tried 5-class, 3-class, and 2-class models. Best performances were with binary (*irrelevant* = very bad / bad, *relevant* = ok / good / best) classification. Classifiers trained on responses to questions 1 and 4 had the highest accuracy.
+
+```{r ratings_first, echo=TRUE, cache=TRUE}
+set.seed(42)
+ratings_first <- responses_first %>%
+  dplyr::mutate(
+    question = as.numeric(factor(question, levels = c(
+      "Would you click on this page when searching for '...'?",
+      "If you searched for '...', would this article be a good result?",
+      "If you searched for '...', would this article be relevant?",
+      "If someone searched for '...', would they want to read this article?"
+    )))
+  ) %>%
+  dplyr::group_by(query, article, choice, question) %>%
+  dplyr::tally() %>%
+  dplyr::ungroup() %>%
+  tidyr::spread(choice, n, fill = 0) %>%
+  dplyr::mutate(
+    total = yes + no + 1,
+    engaged = yes + no + dismiss,
+    score = (yes - no) / total,
+    engagement = (engaged + dismiss) / (total + dismiss + timeout),
+    # Normalized versions:
+    score_norm = (score - mean(score)) / sd(score),
+    engagement_norm = (engagement - mean(engagement)) / sd(engagement)
+  ) %>%
+  dplyr::left_join(trey, by = c("query", "article")) %>%
+  dplyr::mutate(
+    irrelevant = as.numeric(opinion %in% c("very bad", "bad")),
+    ok_or_better = as.numeric(opinion %in% c("ok", "good", "best")),
+    relevant = as.numeric(opinion %in% c("good", "best")),
+    very_bad = as.numeric(opinion == "very bad"),
+    bad = as.numeric(opinion == "bad"),
+    ok = as.numeric(opinion == "ok"),
+    good = as.numeric(opinion == "good"),
+    best = as.numeric(opinion == "best"),
+    opinion2 = factor(dplyr::case_when(
+      opinion %in% c("very bad", "bad") ~ "bad",
+      opinion %in% c("ok", "good", "best") ~ "ok or better"
+    ), levels = c("bad", "ok or better")),
+    opinion3 = factor(dplyr::case_when(
+      opinion %in% c("very bad", "bad") ~ "bad",
+      opinion %in% c("good", "best") ~ "good",
+      opinion == "ok" ~ "ok"
+    ), levels = c("bad", "ok", "good")),
+    opinion5 = factor(opinion, levels = c("very bad", "bad", "ok", "good", "best"))
+  ) %>%
+  split(., .$question) %>%
+  lapply(function(df) {
+    training_idx <- sample.int(nrow(df), 0.7 * nrow(df), replace = FALSE)
+    testing_idx <- setdiff(1:nrow(df), training_idx)
+    return(list(train = df[training_idx, ], test = df[testing_idx, ]))
+  })
+```
+
+```{r models_first, echo=TRUE, cache=TRUE, dependson='ratings_first'}
+set.seed(0)
+logistic_regression <- dplyr::bind_rows(list(
+  "2" = dplyr::bind_rows(lapply(ratings_first, function(question) {
+    lr <- glm(opinion2 ~ score + engagement, data = question$train, family = binomial())
+    predictions <- predict(lr, question$test[, c("score", "engagement")], type = "response")
+    return(data.frame(accuracy = caret::confusionMatrix(
+      factor(predictions > 0.5, c(FALSE, TRUE), levels(question$test$opinion2)),
+      reference = question$test$opinion2
+    )$overall["Accuracy"]))
+  }), .id = "question"),
+  "3" = dplyr::bind_rows(lapply(ratings_first, function(question) {
+    lr <- nnet::multinom(
+      opinion3 ~ score + engagement,
+      data = question$train,
+      trace = FALSE
+    )
+    predictions <- predict(lr, question$test[, c("score", "engagement")])
+    return(data.frame(accuracy = caret::confusionMatrix(
+      predictions, reference = question$test$opinion3
+    )$overall["Accuracy"]))
+  }), .id = "question"),
+  "5" = dplyr::bind_rows(lapply(ratings_first, function(question) {
+    lr <- nnet::multinom(
+      opinion5 ~ score + engagement,
+      data = question$train,
+      trace = FALSE
+    )
+    predictions <- predict(lr, question$test[, c("score", "engagement")])
+    return(data.frame(accuracy = caret::confusionMatrix(
+      predictions, reference = question$test$opinion5
+    )$overall["Accuracy"]))
+  }), .id = "question")
+), .id = "categories")
+
+random_forest <- dplyr::bind_rows(list(
+  "2" = dplyr::bind_rows(lapply(ratings_first, function(question) {
+    rf <- randomForest::randomForest(
+      opinion2 ~ score + engagement,
+      data = question$train,
+      ntree = 1000
+    )
+    predictions <- predict(rf, question$test[, c("score", "engagement")])
+    return(data.frame(accuracy = caret::confusionMatrix(
+      predictions, reference = question$test$opinion2
+    )$overall["Accuracy"]))
+  }), .id = "question"),
+  "3" = dplyr::bind_rows(lapply(ratings_first, function(question) {
+    rf <- randomForest::randomForest(
+      opinion3 ~ score + engagement,
+      data = question$train,
+      ntree = 1000
+    )
+    predictions <- predict(rf, question$test[, c("score", "engagement")])
+    return(data.frame(accuracy = caret::confusionMatrix(
+      predictions, reference = question$test$opinion3
+    )$overall["Accuracy"]))
+  }), .id = "question"),
+  "5" = dplyr::bind_rows(lapply(ratings_first, function(question) {
+    rf <- randomForest::randomForest(
+      opinion5 ~ score + engagement,
+      data = question$train,
+      ntree = 1000
+    )
+    predictions <- predict(rf, question$test[, c("score", "engagement")])
+    return(data.frame(accuracy = caret::confusionMatrix(
+      predictions, reference = question$test$opinion5
+    )$overall["Accuracy"]))
+  }), .id = "question")
+), .id = "categories")
+
+neural_net <- dplyr::bind_rows(list(
+  "2" = dplyr::bind_rows(lapply(ratings_first, function(question) {
+    nn <- neuralnet::neuralnet(
+      irrelevant + ok_or_better ~ score + engagement,
+      data = question$train,
+      hidden = c(5, 3), stepmax = 1e6
+    )
+    predictions <- factor(
+      c("bad", "ok or better")[apply(neuralnet::compute(nn, question$test[, c("score", "engagement")])$net.result, 1, which.max)],
+      levels = c("bad", "ok or better")
+    )
+    return(data.frame(accuracy = caret::confusionMatrix(
+      predictions, reference = question$test$opinion2
+    )$overall["Accuracy"]))
+  }), .id = "question"),
+  "3" = dplyr::bind_rows(lapply(ratings_first, function(question) {
+    nn <- neuralnet::neuralnet(
+      irrelevant + ok + relevant ~ score + engagement,
+      data = question$train,
+      hidden = c(5, 3), stepmax = 1e6
+    )
+    predictions <- factor(
+      c("bad", "ok", "good")[apply(neuralnet::compute(nn, question$test[, c("score", "engagement")])$net.result, 1, which.max)],
+      levels = c("bad", "ok", "good")
+    )
+    return(data.frame(accuracy = caret::confusionMatrix(
+      predictions, reference = question$test$opinion3
+    )$overall["Accuracy"]))
+  }), .id = "question"),
+  "5" = dplyr::bind_rows(lapply(ratings_first, function(question) {
+    nn <- neuralnet::neuralnet(
+      very_bad + bad + ok + good + best ~ score + engagement,
+      data = question$train,
+      hidden = c(5, 3), stepmax = 1e6
+    )
+    predictions <- factor(
+      c("very bad", "bad", "ok", "good", "best")[apply(neuralnet::compute(nn, question$test[, c("score", "engagement")])$net.result, 1, which.max)],
+      levels = c("very bad", "bad", "ok", "good", "best")
+    )
+    return(data.frame(accuracy = caret::confusionMatrix(
+      predictions, reference = question$test$opinion5
+    )$overall["Accuracy"]))
+  }), .id = "question")
+), .id = "categories")
+
+naive_bayes <- dplyr::bind_rows(list(
+  "2" = dplyr::bind_rows(lapply(ratings_first, function(question) {
+    nb <- e1071::naiveBayes(
+      opinion2 ~ score + engagement,
+      data = question$train
+    )
+    predictions <- predict(nb, question$test[, c("score", "engagement")])
+    return(data.frame(accuracy = caret::confusionMatrix(
+      predictions, reference = question$test$opinion2
+    )$overall["Accuracy"]))
+  }), .id = "question"),
+  "3" = dplyr::bind_rows(lapply(ratings_first, function(question) {
+    nb <- e1071::naiveBayes(
+      opinion3 ~ score + engagement,
+      data = question$train
+    )
+    predictions <- predict(nb, question$test[, c("score", "engagement")])
+    return(data.frame(accuracy = caret::confusionMatrix(
+      predictions, reference = question$test$opinion3
+    )$overall["Accuracy"]))
+  }), .id = "question"),
+  "5" = dplyr::bind_rows(lapply(ratings_first, function(question) {
+    nb <- e1071::naiveBayes(
+      opinion5 ~ score + engagement,
+      data = question$train
+    )
+    predictions <- predict(nb, question$test[, c("score", "engagement")])
+    return(data.frame(accuracy = caret::confusionMatrix(
+      predictions, reference = question$test$opinion5
+    )$overall["Accuracy"]))
+  }), .id = "question")
+), .id = "categories")
+
+gradient_boosted <- dplyr::bind_rows(list(
+  "2" = dplyr::bind_rows(lapply(ratings_first, function(question) {
+    xgb <- xgboost::xgboost(
+      data = as.matrix(question$train[, c("score", "engagement")]),
+      label = as.numeric(question$train$opinion2) - 1,
+      objective = "binary:logistic", nrounds = 100, nthread = 4, verbose = 0
+    )
+    predictions <- predict(xgb, as.matrix(question$test[, c("score", "engagement")]))
+    return(data.frame(accuracy = caret::confusionMatrix(
+      factor(predictions > 0.5, c(FALSE, TRUE), c("bad", "ok or better")),
+      reference = question$test$opinion2
+    )$overall["Accuracy"]))
+  }), .id = "question"),
+  "3" = dplyr::bind_rows(lapply(ratings_first, function(question) {
+    xgb <- xgboost::xgboost(
+      data = as.matrix(question$train[, c("score", "engagement")]),
+      label = as.numeric(question$train$opinion3) - 1, num_class = 3,
+      objective = "multi:softmax", nrounds = 100, nthread = 4, verbose = 0
+    )
+    predictions <- predict(xgb, as.matrix(question$test[, c("score", "engagement")]))
+    return(data.frame(accuracy = caret::confusionMatrix(
+      factor(predictions, 0:2, levels(question$test$opinion3)),
+      reference = question$test$opinion3
+    )$overall["Accuracy"]))
+  }), .id = "question"),
+  "5" = dplyr::bind_rows(lapply(ratings_first, function(question) {
+    xgb <- xgboost::xgboost(
+      data = as.matrix(question$train[, c("score", "engagement")]),
+      label = as.numeric(question$train$opinion5) - 1, num_class = 5,
+      objective = "multi:softmax", nrounds = 100, nthread = 4, verbose = 0
+    )
+    predictions <- predict(xgb, as.matrix(question$test[, c("score", "engagement")]))
+    return(data.frame(accuracy = caret::confusionMatrix(
+      factor(predictions, 0:4, levels(question$test$opinion5)),
+      reference = question$test$opinion5
+    )$overall["Accuracy"]))
+  }), .id = "question")
+), .id = "categories")
+```
+
+```{r results_first}
+DT::datatable(
+  dplyr::bind_rows(list(
+    "logistic regression" = logistic_regression,
+    "random forest" = random_forest,
+    "neural net (5, 3)" = neural_net,
+    "naive bayes" = naive_bayes,
+    "xgboost" = gradient_boosted
+  ), .id = "classifier"),
+  caption = htmltools::tags$caption(
+    style = "text-align: left",
+    htmltools::HTML(
+      paste0(
+        "Accuracy of each classifier for each of the four questions:<br>",
+        paste0(c(
+          "&nbsp;&nbsp;<strong>(1)</strong> Would you click on this page when searching for '...'?",
+          "&nbsp;&nbsp;<strong>(2)</strong> If you searched for '...', would this article be a good result?",
+          "&nbsp;&nbsp;<strong>(3)</strong> If you searched for '...', would this article be relevant?",
+          "&nbsp;&nbsp;<strong>(4)</strong> If someone searched for '...', would they want to read this article?"
+        ), collapse = "<br>"),
+        collapse = ""
+    ))
+  ),
+  filter = "top",
+  extensions = "Buttons",
+  options = list(
+    pageLength = 10, autoWidth = TRUE, language = list(search = "Filter:"),
+    order = list(list(4, "desc")), dom = "Bfrtip", buttons = c("copy", "csv")
+  )
+) %>% DT::formatPercentage("accuracy", 3)
+```
+
+## Second Test
+
+```{r data_second}
+responses_second <- readr::read_tsv("data/17073843.tsv")
+```
+```{r aggregates_second, echo=TRUE}
+aggregates_second <- responses_second %>%
+  dplyr::group_by(query, article, question, choice) %>%
+  dplyr::tally() %>%
+  dplyr::ungroup() %>%
+  tidyr::spread(choice, n, fill = 0) %>%
+  dplyr::mutate(
+    total = yes + no + unsure,
+    score_A = (yes - no) / (yes + no + 1),
+    score_B = (yes - no + unsure / 2) / (total + 1),
+    yes = yes / total,
+    no = no / total,
+    unsure = unsure / total,
+    dismiss = dismiss / (total + dismiss),
+    engaged = (total + dismiss) / (total + dismiss + timeout)
+  ) %>%
+  dplyr::select(-c(total, timeout)) %>%
+  tidyr::gather(choice, prop, -c(query, article, question)) %>%
+  dplyr::mutate(choice = factor(choice, levels = c("yes", "no", "unsure", "dismiss", "engaged", "score_A", "score_B")))
+temp <- dplyr::left_join(
+  tidyr::spread(aggregates_second, choice, prop),
+  trey, by = c("query", "article")
+)
+```
+
+The second test (`r format(as.Date(min(responses_second$ts)), "%m/%d")`-`r format(as.Date(max(responses_second$ts)), "%m/%d")`) **had a 60 second time delay** and presented users with options to answer "Yes"/"No"/"I don't know" (coded as "unsure") or dismiss the notification. The notification disappeared after 30 seconds if the user did not interact with it. There were `r prettyNum(length(unique(responses_second$session_id)), big.mark = ",")` sessions and `r prettyNum(sum(responses_second$choice %in% c("yes", "no", "unsure")), big.mark = ",")` yes/no/unsure responses. `r prettyNum(sum(responses_second$choice == "timeout"), big.mark = ",")` (`r sprintf("%.1f%%", 100 * sum(responses_second$choice == "timeout") / nrow(responses_second))`) surveys timed out and `r prettyNum(sum(responses_second$choice == "dismiss"), big.mark = ",")` surveys were dismissed by the user.
+
+### Relevance Predictions
+
+With the first test, it was easier to develop a scoring method using just the number of "yes" and "no" responses. With the second test, we had to include the "I don't know" (coded as "unsure") responses. Because of this, we came up with two possible scoring systems: **method A** does not count "unsure" responses but does use them to normalize the score; **method B** counts half of "unsure" responses and uses all three possible responses to normalize the score.
+
+$$
+\text{Engagement} = \frac{\#\{\text{response: yes/no/unsure/dismiss}\}}{\#\{\text{surveys}\}}
+$$
+
+```{r dataviz_engagement}
+ggplot(temp, aes(x = rating, y = engaged)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_smooth(formula = y ~ x, method = "lm", se = FALSE, color = "black") +
+  geom_jitter(height = 0, width = 0.1, aes(color = opinion), size = 2) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  scale_color_brewer("Trey's opinion of article's relevance", palette = "Set1") +
+  facet_wrap(~ question) +
+  labs(
+    x = "Trey's opinion of article's relevance",
+    y = "Engagement with survey",
+    title = "Users' engagement with survey (not letting it time-out)",
+    subtitle = "With simple linear regression fit overlaid",
+    caption = "Slight negative linear relationship suggests more users engaged with the survey (responded or dismissed) when the page was less relevant."
+  ) +
+  wmf::theme_facet(12, "Source Sans Pro")
+```
+
+#### Scoring Method A
+
+$$
+\text{Score} = \frac{\#\{\text{response: yes}\} - \#\{\text{response: no}\}}{\#\{\text{response: yes/no}\} + 1}
+$$
+
+```{r dataviz_score_A}
+ggplot(temp, aes(x = rating, y = score_A)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_smooth(formula = y ~ x, method = "lm", se = FALSE, color = "black") +
+  geom_jitter(height = 0, width = 0.1, aes(color = opinion), size = 2) +
+  scale_color_brewer("Trey's opinion of article's relevance", palette = "Set1") +
+  facet_wrap(~ question) +
+  labs(
+    x = "Trey's opinion of article's relevance",
+    y = "Relevance score 'A'",
+    title = "Distribution of the crowd's responses compared to expert opinion",
+    subtitle = "With simple linear regression fit overlaid"
+  ) +
+  wmf::theme_facet(12, "Source Sans Pro")
+```
+
+#### Scoring Method B
+
+$$
+\text{Score} = \frac{\#\{\text{response: yes}\} - \#\{\text{response: no}\} + \#\{\text{response: unsure}\}/2}{\#\{\text{response: yes/no/unsure}\} + 1}
+$$
+
+```{r dataviz_score_b}
+ggplot(temp, aes(x = rating, y = score_B)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_smooth(formula = y ~ x, method = "lm", se = FALSE, color = "black") +
+  geom_jitter(height = 0, width = 0.1, aes(color = opinion), size = 2) +
+  scale_color_brewer("Trey's opinion of article's relevance", palette = "Set1") +
+  facet_wrap(~ question) +
+  labs(
+    x = "Trey's opinion of article's relevance",
+    y = "Relevance score 'B'",
+    title = "Distribution of the crowd's responses compared to expert opinion",
+    subtitle = "With simple linear regression fit overlaid"
+  ) +
+  wmf::theme_facet(12, "Source Sans Pro")
+```
+
+```{r}
+rm(temp)
+```
+
+#### Results
+
+```{r ratings_second, echo=TRUE, cache=TRUE}
+set.seed(42)
+ratings_second <- responses_second %>%
+  dplyr::mutate(
+    question = as.numeric(factor(question, levels = c(
+      "Would you click on this page when searching for '...'?",
+      "If you searched for '...', would this article be a good result?",
+      "If you searched for '...', would this article be relevant?",
+      "If someone searched for '...', would they want to read this article?"
+    )))
+  ) %>%
+  dplyr::group_by(query, article, choice, question) %>%
+  dplyr::tally() %>%
+  dplyr::ungroup() %>%
+  tidyr::spread(choice, n, fill = 0) %>%
+  dplyr::mutate(
+    total = yes + no + unsure + 1,
+    engaged = yes + no + unsure + dismiss,
+    score_A = (yes - no) / (yes + no + 1),
+    score_B = (yes - no + unsure / 2) / total,
+    engagement = (engaged + dismiss) / (total + dismiss + timeout),
+    # Normalized versions:
+    score_A_norm = (score_A - mean(score_A)) / sd(score_A),
+    score_B_norm = (score_B - mean(score_B)) / sd(score_B),
+    engagement_norm = (engagement - mean(engagement)) / sd(engagement)
+  ) %>%
+  dplyr::left_join(trey, by = c("query", "article")) %>%
+  dplyr::mutate(
+    irrelevant = as.numeric(opinion %in% c("very bad", "bad")),
+    ok_or_better = as.numeric(opinion %in% c("ok", "good", "best")),
+    relevant = as.numeric(opinion %in% c("good", "best")),
+    very_bad = as.numeric(opinion == "very bad"),
+    bad = as.numeric(opinion == "bad"),
+    ok = as.numeric(opinion == "ok"),
+    good = as.numeric(opinion == "good"),
+    best = as.numeric(opinion == "best"),
+    opinion2 = factor(dplyr::case_when(
+      opinion %in% c("very bad", "bad") ~ "bad",
+      opinion %in% c("ok", "good", "best") ~ "ok or better"
+    ), levels = c("bad", "ok or better")),
+    opinion3 = factor(dplyr::case_when(
+      opinion %in% c("very bad", "bad") ~ "bad",
+      opinion %in% c("good", "best") ~ "good",
+      opinion == "ok" ~ "ok"
+    ), levels = c("bad", "ok", "good")),
+    opinion5 = factor(opinion, levels = c("very bad", "bad", "ok", "good", "best"))
+  ) %>%
+  split(., .$question) %>%
+  lapply(function(df) {
+    training_idx <- sample.int(nrow(df), 0.7 * nrow(df), replace = FALSE)
+    testing_idx <- setdiff(1:nrow(df), training_idx)
+    return(list(train = df[training_idx, ], test = df[testing_idx, ]))
+  })
+```
+
+```{r models_second, echo=TRUE, cache=TRUE, dependson='ratings_second'}
+data_frame <- function(...) {
+  return(data.frame(..., stringsAsFactors = FALSE))
+}
+set.seed(0)
+logistic_regression <- dplyr::bind_rows(list(
+  "2" = dplyr::bind_rows(lapply(ratings_second, function(question) {
+    lr_A <- glm(opinion2 ~ score_A + engagement, data = question$train, family = binomial())
+    predictions_A <- predict(lr_A, question$test[, c("score_A", "engagement")], type = "response")
+    lr_B <- glm(opinion2 ~ score_B + engagement, data = question$train, family = binomial())
+    predictions_B <- predict(lr_B, question$test[, c("score_B", "engagement")], type = "response")
+    accuracy <- list(
+      A = data_frame(accuracy = caret::confusionMatrix(
+        factor(predictions_A > 0.5, c(FALSE, TRUE), levels(question$test$opinion2)),
+        reference = question$test$opinion2
+      )$overall["Accuracy"]),
+      B = data_frame(accuracy = caret::confusionMatrix(
+        factor(predictions_B > 0.5, c(FALSE, TRUE), levels(question$test$opinion2)),
+        reference = question$test$opinion2
+      )$overall["Accuracy"])
+    )
+    return(dplyr::bind_rows(accuracy, .id = "scoring"))
+  }), .id = "question"),
+  "3" = dplyr::bind_rows(lapply(ratings_second, function(question) {
+    lr_A <- nnet::multinom(
+      opinion3 ~ score_A + engagement,
+      data = question$train,
+      trace = FALSE
+    )
+    predictions_A <- predict(lr_A, question$test[, c("score_A", "engagement")])
+    lr_B <- nnet::multinom(
+      opinion3 ~ score_B + engagement,
+      data = question$train,
+      trace = FALSE
+    )
+    predictions_B <- predict(lr_B, question$test[, c("score_B", "engagement")])
+    accuracy <- list(
+      A = data_frame(accuracy = caret::confusionMatrix(
+        predictions_A, reference = question$test$opinion3
+      )$overall["Accuracy"]),
+      B = data_frame(accuracy = caret::confusionMatrix(
+        predictions_B, reference = question$test$opinion3
+      )$overall["Accuracy"])
+    )
+    return(dplyr::bind_rows(accuracy, .id = "scoring"))
+  }), .id = "question"),
+  "5" = dplyr::bind_rows(lapply(ratings_second, function(question) {
+    lr_A <- nnet::multinom(
+      opinion5 ~ score_A + engagement,
+      data = question$train,
+      trace = FALSE
+    )
+    predictions_A <- predict(lr_A, question$test[, c("score_A", "engagement")])
+    lr_B <- nnet::multinom(
+      opinion5 ~ score_B + engagement,
+      data = question$train,
+      trace = FALSE
+    )
+    predictions_B <- predict(lr_B, question$test[, c("score_B", "engagement")])
+    accuracy <- list(
+      A = data_frame(accuracy = caret::confusionMatrix(
+        predictions_A, reference = question$test$opinion5
+      )$overall["Accuracy"]),
+      B = data_frame(accuracy = caret::confusionMatrix(
+        predictions_B, reference = question$test$opinion5
+      )$overall["Accuracy"])
+    )
+    return(dplyr::bind_rows(accuracy, .id = "scoring"))
+  }), .id = "question")
+), .id = "categories")
+
+random_forest <- dplyr::bind_rows(list(
+  "2" = dplyr::bind_rows(lapply(ratings_second, function(question) {
+    rf_A <- randomForest::randomForest(
+      opinion2 ~ score_A + engagement,
+      data = question$train,
+      ntree = 1000
+    )
+    predictions_A <- predict(rf_A, question$test[, c("score_A", "engagement")])
+    rf_B <- randomForest::randomForest(
+      opinion2 ~ score_B + engagement,
+      data = question$train,
+      ntree = 1000
+    )
+    predictions_B <- predict(rf_B, question$test[, c("score_B", "engagement")])
+    accuracy <- list(
+      A = data_frame(accuracy = caret::confusionMatrix(
+        predictions_A, reference = question$test$opinion2
+      )$overall["Accuracy"]),
+      B = data_frame(accuracy = caret::confusionMatrix(
+        predictions_B, reference = question$test$opinion2
+      )$overall["Accuracy"])
+    )
+    return(dplyr::bind_rows(accuracy, .id = "scoring"))
+  }), .id = "question"),
+  "3" = dplyr::bind_rows(lapply(ratings_second, function(question) {
+    rf_A <- randomForest::randomForest(
+      opinion3 ~ score_A + engagement,
+      data = question$train,
+      ntree = 1000
+    )
+    predictions_A <- predict(rf_A, question$test[, c("score_A", "engagement")])
+    rf_B <- randomForest::randomForest(
+      opinion3 ~ score_B + engagement,
+      data = question$train,
+      ntree = 1000
+    )
+    predictions_B <- predict(rf_B, question$test[, c("score_B", "engagement")])
+    accuracy <- list(
+      A = data_frame(accuracy = caret::confusionMatrix(
+        predictions_A, reference = question$test$opinion3
+      )$overall["Accuracy"]),
+      B = data_frame(accuracy = caret::confusionMatrix(
+        predictions_B, reference = question$test$opinion3
+      )$overall["Accuracy"])
+    )
+    return(dplyr::bind_rows(accuracy, .id = "scoring"))
+  }), .id = "question"),
+  "5" = dplyr::bind_rows(lapply(ratings_second, function(question) {
+    rf_A <- randomForest::randomForest(
+      opinion5 ~ score_A + engagement,
+      data = question$train,
+      ntree = 1000
+    )
+    predictions_A <- predict(rf_A, question$test[, c("score_A", "engagement")])
+    rf_B <- randomForest::randomForest(
+      opinion5 ~ score_B + engagement,
+      data = question$train,
+      ntree = 1000
+    )
+    predictions_B <- predict(rf_B, question$test[, c("score_B", "engagement")])
+    accuracy <- list(
+      A = data_frame(accuracy = caret::confusionMatrix(
+        predictions_A, reference = question$test$opinion5
+      )$overall["Accuracy"]),
+      B = data_frame(accuracy = caret::confusionMatrix(
+        predictions_B, reference = question$test$opinion5
+      )$overall["Accuracy"])
+    )
+    return(dplyr::bind_rows(accuracy, .id = "scoring"))
+  }), .id = "question")
+), .id = "categories")
+
+neural_net <- dplyr::bind_rows(list(
+  "2" = dplyr::bind_rows(lapply(ratings_second, function(question) {
+    nn_A <- neuralnet::neuralnet(
+      irrelevant + ok_or_better ~ score_A + engagement,
+      data = question$train,
+      hidden = c(5, 3), stepmax = 1e6
+    )
+    predictions_A <- factor(
+      c("bad", "ok or better")[apply(neuralnet::compute(nn_A, question$test[, c("score_A", "engagement")])$net.result, 1, which.max)],
+      levels = c("bad", "ok or better")
+    )
+    nn_B <- neuralnet::neuralnet(
+      irrelevant + ok_or_better ~ score_B + engagement,
+      data = question$train,
+      hidden = c(5, 3), stepmax = 1e6
+    )
+    predictions_B <- factor(
+      c("bad", "ok or better")[apply(neuralnet::compute(nn_B, question$test[, c("score_B", "engagement")])$net.result, 1, which.max)],
+      levels = c("bad", "ok or better")
+    )
+    accuracy <- list(
+      A = data_frame(accuracy = caret::confusionMatrix(
+        predictions_A, reference = question$test$opinion2
+      )$overall["Accuracy"]),
+      B = data_frame(accuracy = caret::confusionMatrix(
+        predictions_B, reference = question$test$opinion2
+      )$overall["Accuracy"])
+    )
+    return(dplyr::bind_rows(accuracy, .id = "scoring"))
+  }), .id = "question"),
+  "3" = dplyr::bind_rows(lapply(ratings_second, function(question) {
+    nn_A <- neuralnet::neuralnet(
+      irrelevant + ok + relevant ~ score_A + engagement,
+      data = question$train,
+      hidden = c(5, 3), stepmax = 1e6
+    )
+    predictions_A <- factor(
+      c("bad", "ok", "good")[apply(neuralnet::compute(nn_A, question$test[, c("score_A", "engagement")])$net.result, 1, which.max)],
+      levels = c("bad", "ok", "good")
+    )
+    nn_B <- neuralnet::neuralnet(
+      irrelevant + ok + relevant ~ score_B + engagement,
+      data = question$train,
+      hidden = c(5, 3), stepmax = 1e6
+    )
+    predictions_B <- factor(
+      c("bad", "ok", "good")[apply(neuralnet::compute(nn_B, question$test[, c("score_B", "engagement")])$net.result, 1, which.max)],
+      levels = c("bad", "ok", "good")
+    )
+    accuracy <- list(
+      A = data_frame(accuracy = caret::confusionMatrix(
+        predictions_A, reference = question$test$opinion3
+      )$overall["Accuracy"]),
+      B = data_frame(accuracy = caret::confusionMatrix(
+        predictions_B, reference = question$test$opinion3
+      )$overall["Accuracy"])
+    )
+    return(dplyr::bind_rows(accuracy, .id = "scoring"))
+  }), .id = "question"),
+  "5" = dplyr::bind_rows(lapply(ratings_second, function(question) {
+    nn_A <- neuralnet::neuralnet(
+      very_bad + bad + ok + good + best ~ score_A + engagement,
+      data = question$train,
+      hidden = c(5, 3), stepmax = 1e6
+    )
+    predictions_A <- factor(
+      c("very bad", "bad", "ok", "good", "best")[apply(neuralnet::compute(nn_A, question$test[, c("score_A", "engagement")])$net.result, 1, which.max)],
+      levels = c("very bad", "bad", "ok", "good", "best")
+    )
+    nn_B <- neuralnet::neuralnet(
+      very_bad + bad + ok + good + best ~ score_B + engagement,
+      data = question$train,
+      hidden = c(5, 3), stepmax = 1e6
+    )
+    predictions_B <- factor(
+      c("very bad", "bad", "ok", "good", "best")[apply(neuralnet::compute(nn_B, question$test[, c("score_A", "engagement")])$net.result, 1, which.max)],
+      levels = c("very bad", "bad", "ok", "good", "best")
+    )
+    accuracy <- list(
+      A = data_frame(accuracy = caret::confusionMatrix(
+        predictions_A, reference = question$test$opinion5
+      )$overall["Accuracy"]),
+      B = data_frame(accuracy = caret::confusionMatrix(
+        predictions_B, reference = question$test$opinion5
+      )$overall["Accuracy"])
+    )
+    return(dplyr::bind_rows(accuracy, .id = "scoring"))
+  }), .id = "question")
+), .id = "categories")
+
+naive_bayes <- dplyr::bind_rows(list(
+  "2" = dplyr::bind_rows(lapply(ratings_second, function(question) {
+    nb_A <- e1071::naiveBayes(
+      opinion2 ~ score_A + engagement,
+      data = question$train
+    )
+    predictions_A <- predict(nb_A, question$test[, c("score_A", "engagement")])
+    nb_B <- e1071::naiveBayes(
+      opinion2 ~ score_B + engagement,
+      data = question$train
+    )
+    predictions_B <- predict(nb_B, question$test[, c("score_A", "engagement")])
+    accuracy <- list(
+      A = data_frame(accuracy = caret::confusionMatrix(
+        predictions_A, reference = question$test$opinion2
+      )$overall["Accuracy"]),
+      B = data_frame(accuracy = caret::confusionMatrix(
+        predictions_B, reference = question$test$opinion2
+      )$overall["Accuracy"])
+    )
+    return(dplyr::bind_rows(accuracy, .id = "scoring"))
+  }), .id = "question"),
+  "3" = dplyr::bind_rows(lapply(ratings_second, function(question) {
+    nb_A <- e1071::naiveBayes(
+      opinion3 ~ score_A + engagement,
+      data = question$train
+    )
+    predictions_A <- predict(nb_A, question$test[, c("score_A", "engagement")])
+    nb_B <- e1071::naiveBayes(
+      opinion3 ~ score_B + engagement,
+      data = question$train
+    )
+    predictions_B <- predict(nb_B, question$test[, c("score_A", "engagement")])
+    accuracy <- list(
+      A = data_frame(accuracy = caret::confusionMatrix(
+        predictions_A, reference = question$test$opinion3
+      )$overall["Accuracy"]),
+      B = data_frame(accuracy = caret::confusionMatrix(
+        predictions_B, reference = question$test$opinion3
+      )$overall["Accuracy"])
+    )
+    return(dplyr::bind_rows(accuracy, .id = "scoring"))
+  }), .id = "question"),
+  "5" = dplyr::bind_rows(lapply(ratings_second, function(question) {
+    nb_A <- e1071::naiveBayes(
+      opinion5 ~ score_A + engagement,
+      data = question$train
+    )
+    predictions_A <- predict(nb_A, question$test[, c("score_A", "engagement")])
+    nb_B <- e1071::naiveBayes(
+      opinion5 ~ score_B + engagement,
+      data = question$train
+    )
+    predictions_B <- predict(nb_B, question$test[, c("score_A", "engagement")])
+    accuracy <- list(
+      A = data_frame(accuracy = caret::confusionMatrix(
+        predictions_A, reference = question$test$opinion5
+      )$overall["Accuracy"]),
+      B = data_frame(accuracy = caret::confusionMatrix(
+        predictions_B, reference = question$test$opinion5
+      )$overall["Accuracy"])
+    )
+    return(dplyr::bind_rows(accuracy, .id = "scoring"))
+  }), .id = "question")
+), .id = "categories")
+
+gradient_boosted <- dplyr::bind_rows(list(
+  "2" = dplyr::bind_rows(lapply(ratings_second, function(question) {
+    xgb_A <- xgboost::xgboost(
+      data = as.matrix(question$train[, c("score_A", "engagement")]),
+      label = as.numeric(question$train$opinion2) - 1,
+      objective = "binary:logistic", nrounds = 100, nthread = 4, verbose = 0
+    )
+    predictions_A <- predict(xgb_A, as.matrix(question$test[, c("score_A", "engagement")]))
+    xgb_B <- xgboost::xgboost(
+      data = as.matrix(question$train[, c("score_B", "engagement")]),
+      label = as.numeric(question$train$opinion2) - 1,
+      objective = "binary:logistic", nrounds = 100, nthread = 4, verbose = 0
+    )
+    predictions_B <- predict(xgb_B, as.matrix(question$test[, c("score_B", "engagement")]))
+    accuracy <- list(
+      A = data_frame(accuracy = caret::confusionMatrix(
+        factor(predictions_A > 0.5, c(FALSE, TRUE), c("bad", "ok or better")),
+        reference = question$test$opinion2
+      )$overall["Accuracy"]),
+      B = data_frame(accuracy = caret::confusionMatrix(
+        factor(predictions_B > 0.5, c(FALSE, TRUE), c("bad", "ok or better")),
+        reference = question$test$opinion2
+      )$overall["Accuracy"])
+    )
+    return(dplyr::bind_rows(accuracy, .id = "scoring"))
+  }), .id = "question"),
+  "3" = dplyr::bind_rows(lapply(ratings_second, function(question) {
+    xgb_A <- xgboost::xgboost(
+      data = as.matrix(question$train[, c("score_A", "engagement")]),
+      label = as.numeric(question$train$opinion3) - 1, num_class = 3,
+      objective = "multi:softmax", nrounds = 100, nthread = 4, verbose = 0
+    )
+    predictions_A <- predict(xgb_A, as.matrix(question$test[, c("score_A", "engagement")]))
+    xgb_B <- xgboost::xgboost(
+      data = as.matrix(question$train[, c("score_B", "engagement")]),
+      label = as.numeric(question$train$opinion3) - 1, num_class = 3,
+      objective = "multi:softmax", nrounds = 100, nthread = 4, verbose = 0
+    )
+    predictions_B <- predict(xgb_B, as.matrix(question$test[, c("score_B", "engagement")]))
+    accuracy <- list(
+      A = data_frame(accuracy = caret::confusionMatrix(
+        factor(predictions_A, 0:2, levels(question$test$opinion3)),
+        reference = question$test$opinion3
+      )$overall["Accuracy"]),
+      B = data_frame(accuracy = caret::confusionMatrix(
+        factor(predictions_B, 0:2, levels(question$test$opinion3)),
+        reference = question$test$opinion3
+      )$overall["Accuracy"])
+    )
+    return(dplyr::bind_rows(accuracy, .id = "scoring"))
+  }), .id = "question"),
+  "5" = dplyr::bind_rows(lapply(ratings_second, function(question) {
+    xgb_A <- xgboost::xgboost(
+      data = as.matrix(question$train[, c("score_A", "engagement")]),
+      label = as.numeric(question$train$opinion5) - 1, num_class = 5,
+      objective = "multi:softmax", nrounds = 100, nthread = 4, verbose = 0
+    )
+    predictions_A <- predict(xgb_A, as.matrix(question$test[, c("score_A", "engagement")]))
+    xgb_B <- xgboost::xgboost(
+      data = as.matrix(question$train[, c("score_B", "engagement")]),
+      label = as.numeric(question$train$opinion5) - 1, num_class = 5,
+      objective = "multi:softmax", nrounds = 100, nthread = 4, verbose = 0
+    )
+    predictions_B <- predict(xgb_B, as.matrix(question$test[, c("score_B", "engagement")]))
+    accuracy <- list(
+      A = data_frame(accuracy = caret::confusionMatrix(
+        factor(predictions_A, 0:4, levels(question$test$opinion5)),
+        reference = question$test$opinion5
+      )$overall["Accuracy"]),
+      B = data_frame(accuracy = caret::confusionMatrix(
+        factor(predictions_B, 0:4, levels(question$test$opinion5)),
+        reference = question$test$opinion5
+      )$overall["Accuracy"])
+    )
+    return(dplyr::bind_rows(accuracy, .id = "scoring"))
+  }), .id = "question")
+), .id = "categories")
+```
+
+```{r results_second}
+DT::datatable(
+  dplyr::bind_rows(list(
+    "logistic regression" = logistic_regression,
+    "random forest" = random_forest,
+    "neural net (5, 3)" = neural_net,
+    "naive bayes" = naive_bayes,
+    "xgboost" = gradient_boosted
+  ), .id = "classifier"),
+  caption = htmltools::tags$caption(
+    style = "text-align: left",
+    htmltools::HTML(
+      paste0(
+        "Accuracy of each classifier for each of the four questions:<br>",
+        paste0(c(
+          "&nbsp;&nbsp;<strong>(1)</strong> Would you click on this page when searching for '...'?",
+          "&nbsp;&nbsp;<strong>(2)</strong> If you searched for '...', would this article be a good result?",
+          "&nbsp;&nbsp;<strong>(3)</strong> If you searched for '...', would this article be relevant?",
+          "&nbsp;&nbsp;<strong>(4)</strong> If someone searched for '...', would they want to read this article?"
+        ), collapse = "<br>"),
+        collapse = ""
+    ))
+  ),
+  filter = "top",
+  extensions = "Buttons",
+  options = list(
+    pageLength = 10, autoWidth = TRUE, language = list(search = "Filter:"),
+    order = list(list(5, "desc")), dom = "Bfrtip", buttons = c("copy", "csv")
+  )
+) %>% DT::formatPercentage("accuracy", 3)
+```

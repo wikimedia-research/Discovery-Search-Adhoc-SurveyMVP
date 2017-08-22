@@ -4,10 +4,16 @@ Analysis of minimum viable product test of asking English Wikipedia visitors abo
 
 **Queries**:
 
-- 'sailor soldier tinker spy'
-- 'what is a genius iq?'
-- 'who is v for vendetta?'
-- 'why is a baby goat a kid?'
+- 10 items or fewer
+- block buster
+- how do flowers bloom?
+- sailor soldier tinker spy
+- search engine
+- star and stripes
+- what is a genius iq?
+- who is v for vendetta?
+- why is a baby goat a kid?
+- yesterday beetles
 
 **Questions**:
 

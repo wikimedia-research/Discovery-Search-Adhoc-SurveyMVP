@@ -25,3 +25,4 @@ vignettes/*.pdf
 .Rproj.user
 data/
 figures/
+report_files/figure-html/

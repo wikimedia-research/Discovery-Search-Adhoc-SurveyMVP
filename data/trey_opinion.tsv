@@ -1,0 +1,51 @@
+query	opinion	article	rating
+who is v for vendetta?	ok	V for Vendetta (film)	0
+who is v for vendetta?	ok	V for Vendetta	0
+who is v for vendetta?	good	List of V for Vendetta characters	1
+who is v for vendetta?	best	V (comics)	2
+who is v for vendetta?	bad	Vendetta Pro Wrestling	-1
+star and stripes	ok	Stars and Stripes Forever (disambiguation)	0
+star and stripes	bad	The White Stripes	-1
+star and stripes	bad	Tars and Stripes	-1
+star and stripes	ok	The Stars and Stripes Forever	0
+star and stripes	bad	Stripes (film)	-1
+block buster	best	Blockbuster	2
+block buster	good	Block Buster!	1
+block buster	bad	The Sweet (album)	-1
+block buster	ok	Block Busters	0
+block buster	bad	Buster Keaton	-1
+10 items or fewer	ok	Fewer vs. less	0
+10 items or fewer	very bad	10-foot user interface	-2
+10 items or fewer	very bad	Magic item (Dungeons & Dragons)	-2
+10 items or fewer	very bad	Item-item collaborative filtering	-2
+10 items or fewer	very bad	Item 47	-2
+sailor soldier tinker spy	best	Tinker Tailor Soldier Spy	2
+sailor soldier tinker spy	good	Tinker, Tailor	1
+sailor soldier tinker spy	ok	Blanket of Secrecy	0
+sailor soldier tinker spy	ok	List of fictional double agents	0
+sailor soldier tinker spy	ok	Ian Bannen	0
+how do flowers bloom?	bad	Britain in Bloom	-1
+how do flowers bloom?	very bad	Flowers in the Attic (1987 film)	-2
+how do flowers bloom?	best	Flower	2
+how do flowers bloom?	very bad	Thymaridas	-2
+how do flowers bloom?	very bad	Flowers in the Attic	-2
+yesterday beetles	very bad	Private language argument	-2
+yesterday beetles	very bad	Diss (music)	-2
+yesterday beetles	very bad	How Do You Sleep? (John Lennon song)	-2
+yesterday beetles	very bad	Maria Mitchell Association	-2
+yesterday beetles	very bad	The Collected Stories of Philip K. Dick	-2
+search engine	best	Web search engine	2
+search engine	good	List of search engines	1
+search engine	ok	Search engine optimization	0
+search engine	ok	Search engine marketing	0
+search engine	ok	Audio search engine	0
+what is a genius iq?	good	Genius	1
+what is a genius iq?	best	IQ classification	2
+what is a genius iq?	bad	Genius (website)	-1
+what is a genius iq?	ok	High IQ society	0
+what is a genius iq?	bad	Social IQ score of bacteria	-1
+why is a baby goat a kid?	best	Goat	2
+why is a baby goat a kid?	very bad	Super Why!	-2
+why is a baby goat a kid?	very bad	Barney & Friends	-2
+why is a baby goat a kid?	very bad	The Kids from Room 402	-2
+why is a baby goat a kid?	very bad	Oliver Hardy filmography	-2

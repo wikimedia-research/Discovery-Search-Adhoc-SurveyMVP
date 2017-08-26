@@ -1,5 +1,7 @@
 # Search Relevance: graded by humans (MVP)
 
+[![By EBernhardson](docs/figures/example_human_search_relevance_survey.png)](https://phabricator.wikimedia.org/F9161493)
+
 Analysis of minimum viable product test of asking English Wikipedia visitors about the quality of certain pages for pre-specified search queries ([T171740](https://phabricator.wikimedia.org/T171740)).
 
 **Queries**:

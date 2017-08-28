@@ -8,7 +8,7 @@ author:
   - "<a href='https://meta.wikimedia.org/wiki/User:DTankersley_(WMF)'>Deb Tankersley</a>"
 date: "`r format(Sys.Date(), '%d %B %Y')`"
 abstract: >
-  Using a curated list of 10 search queries and the English Wikipedia articles that were the top 5 results for each one, we asked (randomly selected) visitors to those articles whether the article they were on was relevant to the respective search query. Using our own judgement about those articles' relevance as the gold standard, a summary relevance score computed from users' responses, and the users' engagement with the survey, we were able to train models to classify articles as relevant or irrelevant with a remarkably high accuracy for the few data points we had to work with. These methods, combined with more data, would enable us to leverage the opinions of our enormous audience to predict article rankings for search queries at a large scale, which we could then feed into our learning-to-rank project to make searching Wikipedia and other Wikimedia projects better for our users.
+  Using a curated list of 10 search queries and the English Wikipedia articles that were the top 5 results for each one, we asked randomly selected visitors to those articles whether the article they were on was relevant to the respective search query. Using our own judgement about those articles' relevance as the gold standard, a summary relevance score computed from users' responses, and the users' engagement with the survey, we were able to train models to classify articles as relevant or irrelevant with a remarkably high accuracy for the few data points we had to work with. These methods, combined with more data, would enable us to leverage the opinions of our enormous audience to predict article rankings for search queries at a large scale, which we could then feed into our learning-to-rank project to make searching Wikipedia and other Wikimedia projects better for our users.
 output:
   html_document:
     # Table of Contents
@@ -36,7 +36,7 @@ library(magrittr)
 library(glue)
 library(ggplot2)
 ```
-```{css fonts, echo=FALSE}
+```{css, echo=FALSE}
 @import url('https://fonts.googleapis.com/css?family=Source+Code+Pro|Source+Sans+Pro|Source+Serif+Pro');
 body, p {
   font-family: 'Source Serif Pro', serif;
@@ -60,8 +60,11 @@ p.abstract {
   font-weight: bold;
   font-size: 14pt !important;
 }
+.footnotes {
+  margin-bottom: 80%;
+}
 ```
-```{js fullrez}
+```{js, echo=FALSE}
 $( function() {
   /* Lets the user click on the images to view them in full resolution. */
   $( "img" ).wrap( function() {
@@ -182,6 +185,8 @@ ggplot(temp, aes(x = rating, y = engaged)) +
 rm(temp)
 ```
 
+[&uarr; Top of section](#first-test)
+
 #### Survey Responses
 
 ```{r datavis_first}
@@ -212,6 +217,8 @@ for (query in unique(aggregates_first$query)) {
   print(p)
 }
 ```
+
+[&uarr; Top of section](#first-test)
 
 #### Relevance Predictions
 
@@ -509,6 +516,8 @@ DT::datatable(
 ) %>% DT::formatPercentage("accuracy", 3)
 ```
 
+[&uarr; Top of section](#first-test)
+
 ### Second Test {.tabset}
 
 ```{r data_second}
@@ -567,6 +576,8 @@ ggplot(temp, aes(x = rating, y = engaged)) +
   wmf::theme_facet(12, "Source Sans Pro")
 ```
 
+[&uarr; Top of section](#second-test)
+
 ##### Scoring Method A
 
 $$
@@ -615,6 +626,8 @@ ggplot(temp, aes(x = rating, y = score_B)) +
 rm(temp)
 ```
 
+[&uarr; Top of section](#second-test)
+
 #### Survey Responses
 
 ```{r datavis_second}
@@ -646,6 +659,8 @@ for (query in unique(aggregates_second$query)) {
   print(p)
 }
 ```
+
+[&uarr; Top of section](#second-test)
 
 #### Relevance Predictions
 
@@ -1114,11 +1129,13 @@ DT::datatable(
 ) %>% DT::formatPercentage("accuracy", 3)
 ```
 
+[&uarr; Top of section](#second-test)
+
 ## Conclusion
 
 Using relatively few article judgements, we are able to train models that perform remarkably well given the amount of data. That is, using a larger set of articles for which we have an "expert opinion" regarding their relevance to a certain search query, we will be able to train a model that accurately predicts an article's relevance just from users' survey responses and engagement with the survey. This will enable us to use aggregated public opinion to rank a large volume of articles.
 
-Using binary classification (irrelevant/relevant), we can ask the algorithms to return predicted probabilities instead of predicted classes. Assuming the model has exceptional accuracy, we can then feed queries and rankings (as predicted from users' survey responses) into our [learning-to-rank (LTR)](https://en.wikipedia.org/wiki/Learning_to_rank) endeavor.[^announcement]
+Using binary classification (irrelevant/relevant), we can ask the algorithms to return predicted probabilities instead of predicted classes. Assuming the model has exceptional accuracy, we can then feed queries and rankings (predicted from users' survey responses) as training data into our [learning-to-rank (LTR)](https://en.wikipedia.org/wiki/Learning_to_rank) endeavor.[^announcement]
 
 In a presentation of this work,[^notes] [Dario Taraborelli](https://meta.wikimedia.org/wiki/User:Dario_(WMF)) (Head of [Wikimedia Research](https://www.mediawiki.org/wiki/Wikimedia_Research)) brought up the valid point of how the question wording ("relevant to you" vs. "relevant to people") primes the respondent differently and could yield different results. It was interesting, then, to see question 4 ("If _**someone**_ searched for '...', would _**they**_ want to read this article?") show up in both tests as the question whose responses yielded the better classification performances.
 
@@ -1131,3 +1148,5 @@ In a presentation of this work,[^notes] [Dario Taraborelli](https://meta.wikimed
 As this was a proof of concept / MVP, we did not apply a lot of rigor to certain aspects. For example, we did not have multiple experts agree on the articles' relevance, but rather one person's opinions were used as the gold standard. On the analysis side, a lot of the time was spent getting multiple classification algorithms running in different configuration combinations; so we were not able to include a more rigorous accuracy estimation approach like cross-validation. At the time of this report's publication we are planning on launching a third test ([T174106](https://phabricator.wikimedia.org/T174106)).
 
 Then there's the issue of what this looks like in production. For deploying this on Wikipedia, we might want to specifically optimize for encyclopedic searches. For example, "barack obama birthdate" and "iphone 7 release date" are encyclopedic search queries, but "how do i 3d print a miniature santa claus?" is not. Unless we utilize natural language processing and machine learning to detect such queries, we cannot automate query selection by picking the most popular queries to ask users about. We would also need to decide whether to train relevance models on a per-wiki/project/language basis. That is, we cannot assume that the relationship between survey responses, engagement, and relevance is the same on German Wikipedia, French Wikisource, and Wikidata.
+
+Filtering for encyclopedicity is just one thing that human reviewers will have to do. We will have to curate the queries anyway because we need to filter for personally identifiable information (PII), gibberish, and queries in the wrong language. However, although manually reviewing 500 queries takes a few hours, we can easily leverage that into 25K-50K crowd-sourced relevance judgements (50-100 results per query) in a relatively short time, whereas the more tedious [Discernatron](https://www.mediawiki.org/wiki/Discernatron) has only gotten ~7500 (150 queries * ~50 results per query) over the course of about a year.
